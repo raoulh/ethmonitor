@@ -18,6 +18,8 @@ var (
 	errEthminer       = errors.New("ethminer: error occured")
 	errTooMuchFailure = errors.New("ethminer: too much failure")
 	config            Config
+
+	durationKill = time.Minute * 3
 )
 
 type Config struct {
@@ -25,6 +27,7 @@ type Config struct {
 	Env           map[string]string `json:"env"`
 	EthminerArgs  string            `json:"ethminer_args"`
 	MaxErrorCount int               `json:"max_error_count"`
+	MaxRetryCount int               `json:"max_retry_count"`
 	StartDelay    int               `json:"start_delay_sec"`
 	EmailNotif    string            `json:"email_notif"`
 	EmailPass     string            `json:"email_pass"`
@@ -65,7 +68,7 @@ func monitorEthminer() (err error) {
 			globalErrorCount++
 		}
 
-		if globalErrorCount > config.MaxErrorCount {
+		if globalErrorCount > config.MaxRetryCount {
 			return errTooMuchFailure
 		}
 	}
@@ -101,8 +104,33 @@ func runMiner() (err error) {
 	// read command's stdout line by line
 	in := bufio.NewScanner(stdout)
 
+	//start timer to kill process if no data comes from it
+	timerKill = time.NewTimer(durationKill)
+	defer func() {
+		if timerKill != nil {
+			if !timerKill.Stop() {
+				<-timerKill.C //drain value from the channel
+			}
+			timerKill = nil
+		}
+	}()
+
+	go func() {
+		<-timerKill.C
+		timerKill = nil
+		log.Println("Timer expires, kill miner")
+		cmd.Process.Kill()
+	}()
+
 	for in.Scan() {
 		ln := in.Text()
+
+		if timerKill != nil {
+			if !timerKill.Stop() {
+				<-timerKill.C //drain value from the channel
+			}
+			timerKill.Reset(durationKill)
+		}
 
 		//write line to stdout
 		fmt.Println(ln)
@@ -135,6 +163,7 @@ var (
 	RegLine = regexp.MustCompile(ReCatchLog)
 
 	errorCount = 0
+	timerKill  *time.Timer
 )
 
 type LogLine struct {
@@ -169,6 +198,10 @@ func processLine(ln string) (err error) {
 	if l.Type == "X" {
 		errorCount++
 		fmt.Printf("type is %s errorCount is %d\n", l.Type, errorCount)
+	}
+
+	if strings.HasPrefix(l.Message, "B-)") {
+		errorCount = 0
 	}
 
 	//When too much error, stop miner
