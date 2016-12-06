@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -53,7 +52,10 @@ func monitorEthminer() (err error) {
 
 	for {
 		log.Printf("%s Waiting %ds before starting miner...", CharStar, config.StartDelay)
-		time.Sleep(time.Second * time.Duration(config.StartDelay))
+		for i := 0; i < config.StartDelay; i++ {
+			log.Printf("Starting in %ds", config.StartDelay-i)
+			time.Sleep(time.Second * 1)
+		}
 
 		log.Println(CharArrow + "Start miner")
 		sendEmail("[MINING] - Start miner", fmt.Sprintf("Miner is going to be started attempt: #%d", globalErrorCount))
@@ -79,17 +81,17 @@ func runMiner() (err error) {
 	}
 	cmd.Env = env
 
-	stdout, err := cmd.StdoutPipe()
+	stdout, err := cmd.StderrPipe()
 	if err != nil {
 		return err
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	//	stderr, err := cmd.StderrPipe()
+	//	if err != nil {
+	//		return err
+	//	}
 
-	multi := io.MultiReader(stdout, stderr)
+	//	multi := io.MultiReader(stdout, stderr)
 
 	// start the command after having set up the pipe
 	if err = cmd.Start(); err != nil {
@@ -97,13 +99,13 @@ func runMiner() (err error) {
 	}
 
 	// read command's stdout line by line
-	in := bufio.NewScanner(multi)
+	in := bufio.NewScanner(stdout)
 
 	for in.Scan() {
 		ln := in.Text()
 
 		//write line to stdout
-		os.Stdout.WriteString(ln + "\n")
+		fmt.Println(ln)
 
 		//and process the line for info
 		err = processLine(ln)
